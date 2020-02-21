@@ -9,27 +9,20 @@ import java.util.Map;
 
 public final class SimpleZip {
 
-    private static final byte[] localFileHeaderSign = new byte[]{0x50, 0x4b, 0x03, 0x04};
+    private static final byte[] localFileHeaderSignData = new byte[]{0x50, 0x4b, 0x03, 0x04};
+    private static final byte[] centralFileHeaderSignData = new byte[]{0x50, 0x4b, 0x01, 0x02};
+    private static final byte[] endFileHeaderSignData = new byte[]{0x50, 0x4b, 0x05, 0x06};
 
-    private static final byte[] version = new byte[]{0x14, 0x00};
-    private static final byte[] purposeBitFlag = new byte[]{0x02, 0x00};
-    private static final byte[] compressionMethod = new byte[]{0x00, 0x00};
 
-    private Map<String, Integer> crcMap = new HashMap<>();
+    private static final byte[] versionData = new byte[]{0x14, 0x00};
+    private static final byte[] purposeBitFlagData = new byte[]{0x02, 0x00};
+    private static final byte[] compressionMethodData = new byte[]{0x00, 0x00};
 
-    private Map<String, Integer> prepareCrc(String... files) throws IOException {
-        Map<String, Integer> result = new HashMap<>();
+    private SimpleZip(){}
 
-        for (String file : files) {
-            result.put(file, CrcUtil.getCrc(file));
-        }
+    public static void archive(String destFile, String... files) throws IOException {
 
-        return result;
-    }
-
-    public void archive(String destFile, String... files) throws IOException {
-
-        crcMap = prepareCrc(files);
+        Map<String, Integer> crcMap = prepareCrc(files);
 
         FileOutputStream outputFile = new FileOutputStream(destFile);
 
@@ -38,14 +31,16 @@ public final class SimpleZip {
 
         byte[] b = new byte[65536];
         for (int i = 0; i < files.length; i++) {
-            String s = files[i];
-            byte[] fileData = writeLocalHeader(s);
-            long fileSize = new File(s).length();
-            offsets[i] = offset;
-            offset += fileData.length + fileSize;
-            outputFile.write(fileData);
+            String filename = files[i];
+            File file = new File(filename);
 
-            FileInputStream inputStream = new FileInputStream(s);
+            byte[] localHeaderData = writeLocalHeader(file, crcMap);
+            long fileSize = file.length();
+            offsets[i] = offset;
+            offset += localHeaderData.length + fileSize;
+            outputFile.write(localHeaderData);
+
+            FileInputStream inputStream = new FileInputStream(file);
             int c;
             while ((c = inputStream.read(b)) != -1) {
                 outputFile.write(b, 0, c);
@@ -57,113 +52,118 @@ public final class SimpleZip {
         int centralDirSize = 0;
         int centralDirOffset = offset;
         for (int i = 0; i < files.length; i++) {
-            String s = files[i];
-            byte[] centralData = writeCentralHeader(s, offsets[i]);
-            centralDirSize += centralData.length;
+            String filename = files[i];
+            File file = new File(filename);
 
-            outputFile.write(centralData);
+            byte[] centralHeaderData = writeCentralHeader(file, offsets[i], crcMap);
+            centralDirSize += centralHeaderData.length;
+
+            outputFile.write(centralHeaderData);
         }
         //
-        byte[] endData = writeEndHeader(centralDirSize, centralDirOffset, files.length);
-        outputFile.write(endData);
+        byte[] endHeaderData = writeEndHeader(centralDirSize, centralDirOffset, files.length);
+        outputFile.write(endHeaderData);
         //
 
         outputFile.close();
     }
 
-    private byte[] writeLocalHeader(String fullFileName) throws IOException {
-        File file = new File(fullFileName);
-        String fn = file.getName();
+    private static Map<String, Integer> prepareCrc(String... files) throws IOException {
+        Map<String, Integer> result = new HashMap<>();
 
-        byte[] date = Utils.toByteArray(Utils.getDate(file.lastModified()), 2);
-        byte[] time = Utils.toByteArray(Utils.getTime(file.lastModified()), 2);
-        byte[] crc = Utils.toByteArray(crcMap.get(fullFileName), 4);
-        byte[] compressedSize = Utils.toByteArray(file.length(), 4);
-        byte[] fileSize = Utils.toByteArray(file.length(), 4);
-
-        byte[] filenameLength = Utils.toLittleEndianByteArray(fn.length(), 2);
-        byte[] filename = fn.getBytes();
-
-        byte[] extraLength = new byte[]{0x00, 0x00};
-        byte[] extraField = new byte[]{};
-
-//        byte[] data = Utils.readFile(fullFileName);
-
-        byte[] result = Utils.makeArray(localFileHeaderSign, version, purposeBitFlag,
-                compressionMethod, time, date, crc, compressedSize, fileSize,
-                filenameLength, extraLength, filename, extraField);
-
-        Utils.arraysCopy(result, localFileHeaderSign, version, purposeBitFlag,
-                compressionMethod, time, date, crc, compressedSize, fileSize,
-                filenameLength, extraLength, filename, extraField);
+        for (String filename : files) {
+            File file = new File(filename);
+            result.put(file.getAbsolutePath(), CrcUtil.getCrc(file));
+        }
 
         return result;
     }
 
-    private byte[] writeCentralHeader(String fullFileName, int offset) throws IOException {
-        final byte[] centralFileHeaderSign = new byte[]{0x50, 0x4b, 0x01, 0x02};
+    private static byte[] writeLocalHeader(File file, Map<String, Integer> crcMap) throws IOException {
+        String filename = file.getName();
 
-        File file = new File(fullFileName);
-        String fn = file.getName();
+        byte[] dateData = Utils.toByteArray(Utils.getDate(file.lastModified()), 2);
+        byte[] timeData = Utils.toByteArray(Utils.getTime(file.lastModified()), 2);
+        byte[] crcData = Utils.toByteArray(crcMap.get(file.getAbsolutePath()), 4);
+        byte[] compressedSizeData = Utils.toByteArray(file.length(), 4);
+        byte[] fileSizeData = Utils.toByteArray(file.length(), 4);
 
-        byte[] date = Utils.toByteArray(Utils.getDate(file.lastModified()), 2);
-        byte[] time = Utils.toByteArray(Utils.getTime(file.lastModified()), 2);
-        byte[] crc = Utils.toByteArray(crcMap.get(fullFileName), 4);
-        byte[] compressedSize = Utils.toByteArray(file.length(), 4);
-        byte[] fileSize = Utils.toByteArray(file.length(), 4);
+        byte[] filenameLengthData = Utils.toLittleEndianByteArray(filename.length(), 2);
+        byte[] filenameData = filename.getBytes();
 
-        byte[] filenameLength = Utils.toLittleEndianByteArray(fn.length(), 2);
-        byte[] filename = fn.getBytes();
+        byte[] extraLengthData = new byte[]{0x00, 0x00};
+        byte[] extraFieldData = new byte[]{};
 
-        byte[] extraLength = new byte[]{0x00, 0x00};
-        byte[] extraField = new byte[]{};
+        byte[] result = Utils.makeArray(localFileHeaderSignData, versionData, purposeBitFlagData,
+                compressionMethodData, timeData, dateData, crcData, compressedSizeData, fileSizeData,
+                filenameLengthData, extraLengthData, filenameData, extraFieldData);
 
-        byte[] commentLength = new byte[]{0x00, 0x00};
-        byte[] commentField = new byte[]{};
+        Utils.arraysCopy(result, localFileHeaderSignData, versionData, purposeBitFlagData,
+                compressionMethodData, timeData, dateData, crcData, compressedSizeData, fileSizeData,
+                filenameLengthData, extraLengthData, filenameData, extraFieldData);
 
-        byte[] diskNumber = new byte[]{0x00, 0x00};
+        return result;
+    }
+
+    private static byte[] writeCentralHeader(File file, int offset, Map<String, Integer> crcMap) throws IOException {
+        String filename = file.getName();
+
+        byte[] dateData = Utils.toByteArray(Utils.getDate(file.lastModified()), 2);
+        byte[] timeData = Utils.toByteArray(Utils.getTime(file.lastModified()), 2);
+        byte[] crcData = Utils.toByteArray(crcMap.get(file.getAbsolutePath()), 4);
+        byte[] compressedSizeData = Utils.toByteArray(file.length(), 4);
+        byte[] fileSizeData = Utils.toByteArray(file.length(), 4);
+
+        byte[] filenameLengthData = Utils.toLittleEndianByteArray(filename.length(), 2);
+        byte[] filenameData = filename.getBytes();
+
+        byte[] extraLengthData = new byte[]{0x00, 0x00};
+        byte[] extraFieldData = new byte[]{};
+
+        byte[] commentLengthData = new byte[]{0x00, 0x00};
+        byte[] commentFieldData = new byte[]{};
+
+        byte[] diskNumberData = new byte[]{0x00, 0x00};
 
         int internalFileAttr = 0;
 
-        byte[] internalFileAttrs = Utils.toByteArray(internalFileAttr, 2);
-        byte[] externalFileAttrs = new byte[]{0x00, 0x00, 0x00, 0x00};
-        byte[] relativeOffsetAttrs = Utils.toByteArray(offset, 4);
+        byte[] internalFileAttrsData = Utils.toByteArray(internalFileAttr, 2);
+        byte[] externalFileAttrsData = new byte[]{0x00, 0x00, 0x00, 0x00};
+        byte[] relativeOffsetAttrsData = Utils.toByteArray(offset, 4);
 
-        byte[] result = Utils.makeArray(centralFileHeaderSign, version, version,
-                purposeBitFlag,
-                compressionMethod, time, date, crc,
-                compressedSize, fileSize,
-                filenameLength, extraLength,
-                commentLength,
-                diskNumber, internalFileAttrs, externalFileAttrs, relativeOffsetAttrs,
-                filename, extraField,
-                commentField);
+        byte[] result = Utils.makeArray(centralFileHeaderSignData, versionData, versionData,
+                purposeBitFlagData,
+                compressionMethodData, timeData, dateData, crcData,
+                compressedSizeData, fileSizeData,
+                filenameLengthData, extraLengthData,
+                commentLengthData,
+                diskNumberData, internalFileAttrsData, externalFileAttrsData, relativeOffsetAttrsData,
+                filenameData, extraFieldData,
+                commentFieldData);
 
-        Utils.arraysCopy(result, centralFileHeaderSign, version, version, purposeBitFlag, compressionMethod,
-                time, date, crc, compressedSize, fileSize, filenameLength, extraLength, commentLength,
-                diskNumber, internalFileAttrs, externalFileAttrs, relativeOffsetAttrs, filename, extraField, commentField);
+        Utils.arraysCopy(result, centralFileHeaderSignData, versionData, versionData, purposeBitFlagData, compressionMethodData,
+                timeData, dateData, crcData, compressedSizeData, fileSizeData, filenameLengthData, extraLengthData, commentLengthData,
+                diskNumberData, internalFileAttrsData, externalFileAttrsData, relativeOffsetAttrsData, filenameData, extraFieldData, commentFieldData);
 
         return result;
     }
 
-    private byte[] writeEndHeader(int centralDir, int offsetCentral, int count) throws IOException {
-        final byte[] endFileHeaderSign = new byte[]{0x50, 0x4b, 0x05, 0x06};
+    private static byte[] writeEndHeader(int centralDir, int offsetCentral, int count) throws IOException {
+        byte[] numberOnDiskData = new byte[]{0x00, 0x00};
+        byte[] diskCentralDirData = new byte[]{0x00, 0x00};
+        byte[] numberCentralDiskData = Utils.toByteArray(count, 2);
+        byte[] totalNumberDirData = Utils.toByteArray(count, 2);
+        byte[] sizeCentralDirData = Utils.toByteArray(centralDir, 4);
+        byte[] offsetCentralDirData = Utils.toByteArray(offsetCentral, 4);
 
-        byte[] numberOnDisk = new byte[]{0x00, 0x00};
-        byte[] diskCentralDir = new byte[]{0x00, 0x00};
-        byte[] numberCentralDisk = Utils.toByteArray(count, 2);
-        byte[] totalNumberDir = Utils.toByteArray(count, 2);
-        byte[] sizeCentralDir = Utils.toByteArray(centralDir, 4);
-        byte[] offsetCentralDir = Utils.toByteArray(offsetCentral, 4);
+        byte[] commentLengthData = new byte[]{0x00, 0x00};
+        byte[] commentFieldData = new byte[]{};
 
-        byte[] commentLength = new byte[]{0x00, 0x00};
-        byte[] commentField = new byte[]{};
+        byte[] result = Utils.makeArray(endFileHeaderSignData, numberOnDiskData, diskCentralDirData, numberCentralDiskData,
+                totalNumberDirData, sizeCentralDirData, offsetCentralDirData, commentLengthData, commentFieldData);
 
-        byte[] result = Utils.makeArray(endFileHeaderSign, numberOnDisk, diskCentralDir, numberCentralDisk,
-                totalNumberDir, sizeCentralDir, offsetCentralDir, commentLength, commentField);
-
-        Utils.arraysCopy(result, endFileHeaderSign, numberOnDisk, diskCentralDir, numberCentralDisk, totalNumberDir,
-                sizeCentralDir, offsetCentralDir, commentLength, commentField);
+        Utils.arraysCopy(result, endFileHeaderSignData, numberOnDiskData, diskCentralDirData, numberCentralDiskData, totalNumberDirData,
+                sizeCentralDirData, offsetCentralDirData, commentLengthData, commentFieldData);
 
         return result;
     }
